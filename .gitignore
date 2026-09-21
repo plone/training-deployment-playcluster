@@ -1,0 +1,17 @@
+.DS_Store
+.env
+.venv
+.galaxy_install_info
+.Python
+.vagrant
+.vault_pass
+*.retry
+etc/keys/*
+!etc/keys/.gitkeep
+!roles/.gitkeep
+roles/*
+.install.stamp
+.claude
+.ansible
+# A filled-in copy of etc/vault.template.yml, before encryption
+vault.plain.yml

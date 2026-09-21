@@ -1,0 +1,118 @@
+---
+# Playbook: playbooks/setup_ci.yml
+# Description: Bootstrap the standalone GitLab CI runner server
+#
+# Additional Reference:
+# https://github.com/riemers/ansible-gitlab-runner
+#
+# Usage:
+#
+#  uv run ansible-playbook playbooks/setup_ci.yml --limit standalone
+#
+# - Redeploy only the container registry
+#  uv run ansible-playbook playbooks/setup_ci.yml --limit standalone --tags registry
+#
+- name: "Bootstrap the GitLab CI runner server"
+  hosts: "standalone"
+  gather_facts: true
+  become: true
+  environment:
+    http_proxy: "{{ proxy.http_proxy }}"
+    https_proxy: "{{ proxy.https_proxy }}"
+    no_proxy: "{{ proxy.no_proxy }}"
+  pre_tasks:
+    - name: "Proxy: Setup"
+      ansible.builtin.import_tasks: ../tasks/base/task_proxy.yml
+
+    - name: "Base Packages: Setup"
+      ansible.builtin.import_tasks: ../tasks/base/task_base_packages.yml
+
+  roles:
+    - role: geerlingguy.swap
+
+  tasks:
+
+    - name: "Hostname"
+      tags:
+        - base
+        - hostname
+      ansible.builtin.import_tasks: ../tasks/base/task_hostname.yml
+
+    - name: "Timezone"
+      tags:
+        - base
+        - timezone
+      become: true
+      community.general.timezone:
+        name: "{{ timezone }}"
+
+    - name: "Disks"
+      tags:
+        - base
+        - disks
+      ansible.builtin.import_tasks: ../tasks/base/task_mount_points.yml
+
+    - name: "Setup default user"
+      tags:
+        - base
+        - user
+      ansible.builtin.import_tasks: ../tasks/base/task_user.yml
+
+    - name: "SSH: Setup"
+      tags:
+        - base
+        - ssh
+      ansible.builtin.import_tasks: ../tasks/base/task_ssh.yml
+
+    - name: "Docker: Setup"
+      tags:
+        - base
+        - docker
+      ansible.builtin.import_tasks: ../tasks/docker/task_setup.yml
+
+    - name: "Docker: Purge data"
+      tags:
+        - cron
+      become: true
+      become_user: "{{ users.default.name }}"
+      block:
+        - name: "Docker: Purge old containers"
+          ansible.builtin.cron:
+            name: "Purge old containers"
+            job: "/usr/bin/docker container prune -f"
+            hour: "*"
+            minute: "5"
+            state: present
+
+        - name: "Docker: Purge old images"
+          ansible.builtin.cron:
+            name: "Purge old images"
+            job: "/usr/bin/docker image prune -f"
+            hour: "*"
+            minute: "10"
+            state: present
+
+        - name: "Docker: Purge old volumes"
+          ansible.builtin.cron:
+            name: "Purge old volumes"
+            job: "/usr/bin/docker volume prune -f"
+            hour: "*"
+            minute: "15"
+            state: present
+
+    - name: "GitLab: Setup CI runner"
+      tags:
+        - ci
+      ansible.builtin.include_role:
+        name: riemers.ansible-gitlab-runner
+
+    - name: "Compose: Deploy Registry"
+      tags:
+        - registry
+      vars:
+        project: "{{ compose_projects.registry }}"
+      ansible.builtin.import_tasks: ../tasks/compose/task_deploy.yml
+
+  handlers:
+    - name: "Include default handlers"
+      ansible.builtin.import_tasks: ../tasks/handlers/common.yml

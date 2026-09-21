@@ -1,0 +1,70 @@
+---
+version: '3.9'
+
+services:
+  agent:
+    image: portainer/agent:${PORTAINER_VERSION}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${DOCKER_DATA_ROOT}/volumes:/var/lib/docker/volumes
+    networks:
+      - agent_network
+    deploy:
+      mode: global
+      placement:
+        constraints:
+          - ${PORTAINER_AGENT_CONSTRAINTS}
+      restart_policy:
+        condition: on-failure
+      update_config:
+        parallelism: 3
+        delay: 1s
+        order: start-first
+
+  portainer:
+    image: portainer/portainer-ce:${PORTAINER_VERSION}
+    # All cluster state arrives over tasks.agent:9001, so the server itself needs
+    # no docker.sock -- the same reasoning behind the socket-proxy in traefik.yml.
+    command: -H tcp://tasks.agent:9001 --tlsskipverify
+    volumes:
+      - portainer_data:/data
+    networks:
+      - agent_network
+      - nw-public
+    deploy:
+      mode: replicated
+      replicas: 1
+      labels:
+        - traefik.enable=true
+        # Must match --providers.swarm.constraints in traefik.yml, which filters
+        # on the literal `public`. It is not the network name.
+        - traefik.constraint-label=public
+        - traefik.http.services.portainer-frontend.loadbalancer.server.port=9000
+        - traefik.http.routers.portainer-frontend.rule=Host(`${PORTAINER_HOSTNAME}`)
+        - traefik.http.routers.portainer-frontend.entrypoints=https
+        - traefik.http.routers.portainer-frontend.service=portainer-frontend
+        - traefik.http.routers.portainer-frontend.tls=true
+        - traefik.http.routers.portainer-frontend.tls.certresolver=le
+        # No traefik.swarm.network label: traefik.yml already sets
+        # --providers.swarm.network=nw-public for every stack it routes.
+      placement:
+        # portainer_data is a local volume, so the server has to keep landing on
+        # the same node. This is volume affinity, not a socket requirement.
+        constraints:
+          - ${PORTAINER_SERVER_CONSTRAINTS:-node.role==manager}
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: stop-first
+
+networks:
+  # Spelled out rather than templated: compose interpolates values, not mapping
+  # keys, so a network name cannot come from a variable.
+  nw-public:
+    external: true
+  agent_network:
+    driver: overlay
+    attachable: true
+
+volumes:
+  portainer_data:

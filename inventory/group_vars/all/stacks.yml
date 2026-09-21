@@ -1,0 +1,62 @@
+---
+stacks:
+
+  traefik:
+    enabled: true
+    stack_file: "etc/stacks/traefik.yml"
+    stack_name: "traefik"
+    main_folder: "/srv/traefik"
+    env_vars:
+      TRAEFIK_VERSION: "v3.7.10"
+      TRAEFIK_UI_HOSTNAME: "traefik.playcluster.plone.org"
+      TRAEFIK_EMAIL:  "{{ devops.email }}"
+      ### To create user:password pair, it's possible to use this command:
+      ### echo $(htpasswd -nb user password)
+      ### Defaults to admin:admin
+      TRAEFIK_UI_BASIC_AUTH: "{{vault.traefik.ui_basic_auth }}"
+
+
+    folders:
+      - path: "/srv/traefik"
+        owner: "{{ users.default.name }}"
+        group: root
+        mode: "0755"
+
+  cronjob:
+    enabled: true
+    stack_file: "etc/stacks/cronjob.yml"
+    stack_name: "cronjob"
+    main_folder: "/srv/cronjob"
+    env_vars:
+      TZ: "UTC"
+      LOG_LEVEL: "info"
+      LOG_JSON: "false"
+      CRONJOB_VERSION: "1.14"
+    folders:
+      - path: "/srv/cronjob"
+        owner: "{{ users.default.name }}"
+        group: root
+        mode: "0755"
+
+  portainer:
+    enabled: true
+    stack_file: "etc/stacks/portainer.yml"
+    stack_name: "portainer"
+    main_folder: "/srv/portainer"
+    env_vars:
+      PORTAINER_HOSTNAME: "portainer.playcluster.plone.org"
+      PORTAINER_VERSION: "2.39.5"
+      # The agent binds the host's volume directory so Portainer can browse
+      # volume contents; it has to follow the daemon's data-root.
+      DOCKER_DATA_ROOT: "{{ docker_daemon_options['data-root'] }}"
+      # Keeps the server on play1, where its local portainer_data volume lives.
+      # It does not need a manager for socket access -- the agents do the
+      # Docker API work.
+      PORTAINER_SERVER_CONSTRAINTS: "node.role==manager"
+      PORTAINER_AGENT_CONSTRAINTS: "node.platform.os==linux"
+
+    folders:
+      - path: "/srv/portainer"
+        owner: "{{ users.default.name }}"
+        group: root
+        mode: "0755"

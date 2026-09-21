@@ -1,0 +1,11 @@
+{#-
+  Basic auth credentials for Traefik's dashboard, rendered by
+  tasks/compose/task_deploy.yml and mounted into the traefik container.
+
+  Managed by Ansible -- overwritten on the next run.
+
+  A file rather than a `basicauth.users` label on purpose: the hash contains
+  `$`, which docker compose interpolates, and container labels are readable by
+  anything that can reach the docker socket.
+-#}
+{{ traefik_dashboard.basic_auth }}

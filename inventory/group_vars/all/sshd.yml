@@ -1,0 +1,17 @@
+---
+# Accounts that need SSH access but are not created by this playbook -- a
+# trainee account you add by hand, or an admin account your hosting provider
+# set up. Space-separated. Anything missing from AllowUsers is refused by sshd
+# even with a valid key, so add an account here *before* you rely on it.
+sshd_extra_allow_users: ""
+
+sshd:
+  port: 22
+  # Ansible provisions over root, so this must stay "yes" (or
+  # "prohibit-password" if root is reachable by key only). task_ssh.yml refuses
+  # to run with a value that would lock Ansible itself out.
+  allow_root: "yes"
+  # plone and root, plus the accounts above.
+  allow_users: >-
+    {{ ([users.default.name, users.setup.name] + sshd_extra_allow_users.split())
+       | unique | join(' ') }}

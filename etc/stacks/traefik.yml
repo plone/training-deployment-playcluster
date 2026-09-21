@@ -1,0 +1,110 @@
+---
+version: '3.9'
+
+services:
+
+  socket-proxy:
+    image: tecnativa/docker-socket-proxy
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      NODES: 1
+      SERVICES: 1
+      TASKS: 1
+      NETWORKS: 1
+    networks:
+      - nw-internal
+    deploy:
+      placement:
+        constraints:
+          - node.role == manager
+
+  traefik:
+    image: "traefik:${TRAEFIK_VERSION}"
+
+    ports:
+      - 80:80
+      - 443:443
+
+    deploy:
+      replicas: 1
+      update_config:
+        parallelism: 1
+        delay: 5s
+        order: start-first
+      placement:
+        # vol-traefik-certs is a local volume. Without this, Traefik can be
+        # scheduled onto a worker where that volume does not exist and silently
+        # re-issues every certificate.
+        constraints:
+          - node.role == manager
+      labels:
+        - "traefik.enable=true"
+        - "traefik.constraint-label=public"
+        - "traefik.http.services.traefik-public.loadbalancer.server.port=8000"
+        # GENERIC MIDDLEWARES
+        - "traefik.http.middlewares.https-redirect.redirectscheme.scheme=https"
+        - "traefik.http.middlewares.https-redirect.redirectscheme.permanent=true"
+        - "traefik.http.middlewares.gzip.compress=true"
+        - "traefik.http.middlewares.gzip.compress.excludedcontenttypes=image/png, image/jpeg, font/woff2"
+
+        - "traefik.http.middlewares.traefik-admin-auth.basicauth.users=${TRAEFIK_UI_BASIC_AUTH}"
+        - "traefik.http.routers.traefik-public-https.rule=Host(`${TRAEFIK_UI_HOSTNAME}`)"
+        - "traefik.http.routers.traefik-public-https.entrypoints=https"
+        - "traefik.http.routers.traefik-public-https.tls=true"
+        - "traefik.http.routers.traefik-public-https.tls.certresolver=le"
+        - "traefik.http.routers.traefik-public-https.service=api@internal"
+        - "traefik.http.routers.traefik-public-https.middlewares=traefik-admin-auth"
+
+        # GENERIC ROUTERS
+        #
+        # HTTP -> HTTPS is handled at the entrypoint instead (see the
+        # --entrypoints.http.http.redirections flags below), so every stack on
+        # the cluster gets it without declaring a router of its own.
+        #
+        # The catch-all router that used to live here was Traefik v2 syntax:
+        # HostRegexp(`{host:.*}`) is not valid in v3, which needs a plain
+        # regexp such as `^.+$`. Redirecting at the entrypoint avoids the
+        # question entirely.
+
+    volumes:
+      - vol-traefik-certs:/certificates
+      # No docker.sock here: the socket-proxy service above brokers the Docker
+      # API, and Traefik reaches it over nw-internal (see the swarm endpoint
+      # flag below).
+
+    command:
+      - --providers.swarm
+      - --providers.swarm.watch
+      - --providers.swarm.endpoint=tcp://socket-proxy:2375
+      - --providers.swarm.exposedbydefault=false
+      - --providers.swarm.network=nw-public
+      - --providers.swarm.constraints=Label(`traefik.constraint-label`, `public`)
+      - --entrypoints.http.address=:80
+      # Redirect all plain HTTP to HTTPS cluster-wide. Without this, a stack
+      # whose routers only bind the https entrypoint answers port 80 with
+      # Traefik's default 404 rather than a redirect.
+      - --entrypoints.http.http.redirections.entrypoint.to=https
+      - --entrypoints.http.http.redirections.entrypoint.scheme=https
+      - --entrypoints.https.address=:443
+      - --certificatesresolvers.le.acme.email=${TRAEFIK_EMAIL}
+      - --certificatesresolvers.le.acme.storage=/certificates/acme.json
+      - --certificatesresolvers.le.acme.tlschallenge=true
+      - --accesslog
+      - --log
+      - --log.level=INFO
+      - --api
+
+    networks:
+      - nw-public
+      - nw-internal
+
+volumes:
+  vol-traefik-certs: {}
+
+networks:
+  nw-public:
+    external: true
+  nw-internal:
+    internal: true
+    driver: overlay

@@ -1,0 +1,136 @@
+# code: language=ansible
+---
+# Deploy a Docker Compose project
+#
+# The compose counterpart of tasks/stacks/task_deploy.yml, for hosts that run
+# plain Docker Engine instead of Swarm. Expects a `project` variable holding one
+# entry of the `compose_projects` dict.
+#
+# Ordering matters here: the templated configuration and the htpasswd file have
+# to be on disk before `docker compose up` runs, or the containers come up
+# against files that do not exist yet.
+#
+- name: "Compose: Install htpasswd dependencies"
+  when:
+    - project.enabled | bool
+    - project.htpasswd is defined
+  tags:
+    - compose
+  # community.general.htpasswd hashes with passlib, which needs a bcrypt
+  # backend of its own -- glibc's crypt() cannot do bcrypt.
+  #
+  # Deliberately apt and not pip: passlib 1.7.4 is incompatible with bcrypt 5,
+  # where its backend probe trips over the 72-byte password limit and raises
+  # instead of detecting the backend. `pip install bcrypt` pulls the latest and
+  # breaks hashing outright, so take the distro's matched pair (passlib 1.7.4 +
+  # bcrypt 3.2.2) instead of pinning versions by hand.
+  #
+  # Scoped here rather than added to the shared list in
+  # tasks/base/task_base_packages.yml, so the cluster hosts stay as they are.
+  ansible.builtin.apt:
+    name:
+      - python3-bcrypt
+      - python3-passlib
+    state: present
+    update_cache: true
+
+- name: "Compose: Prepare deployment"
+  when: project.enabled | bool
+  tags:
+    - compose
+  block:
+
+    - name: "Compose: Create folders"
+      ansible.builtin.file:
+        dest: "{{ item.path }}"
+        state: directory
+        owner: "{{ item.owner }}"
+        group: "{{ item.group }}"
+        mode: "{{ item.mode }}"
+      with_items: "{{ project.folders }}"
+
+    - name: "Compose: Render configuration templates"
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../{{ item.src }}"
+        dest: "{{ item.dest }}"
+        owner: "{{ users.default.name }}"
+        group: root
+        mode: "{{ item.mode | default('0640') }}"
+      with_items: "{{ project.templates | default([]) }}"
+      register: compose_templates
+
+    # Idempotent by verification: the module only rewrites an entry when the
+    # stored hash does not validate against the password, so repeat runs are
+    # clean and do not churn the containers.
+    #
+    # It cannot, however, detect that `hash_scheme` itself changed on an
+    # existing entry -- switching schemes later means deleting the file first.
+    # The default is apr_md5_crypt, which zot will not accept, so bcrypt has to
+    # be spelled out here.
+    - name: "Compose: Create htpasswd entries"
+      when: project.htpasswd is defined
+      community.general.htpasswd:
+        path: "{{ project.htpasswd.path }}"
+        name: "{{ item.name }}"
+        password: "{{ item.password }}"
+        hash_scheme: bcrypt
+        owner: "{{ users.default.name }}"
+        group: root
+        mode: "0640"
+      with_items: "{{ project.htpasswd.users }}"
+      no_log: true
+      register: compose_htpasswd
+
+    - name: "Compose: Copy compose file"
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../{{ project.compose_file }}"
+        dest: "{{ project.main_folder }}/compose.yml"
+        owner: "{{ users.default.name }}"
+        group: root
+        mode: "0644"
+
+    - name: "Compose: Write environment file"
+      ansible.builtin.copy:
+        dest: "{{ project.main_folder }}/.env"
+        content: |
+          # Managed by Ansible, from compose_projects.{{ project.project_name }}.env_vars
+          {% for key, value in project.env_vars.items() %}
+          {{ key }}={{ value }}
+          {% endfor %}
+        owner: "{{ users.default.name }}"
+        group: root
+        mode: "0640"
+
+- name: "Compose: Deploy"
+  when: project.enabled | bool
+  tags:
+    - compose
+  block:
+
+    - name: "Compose: Deploy project"
+      community.docker.docker_compose_v2:
+        project_src: "{{ project.main_folder }}"
+        project_name: "{{ project.project_name }}"
+        files:
+          - compose.yml
+        state: present
+        pull: missing
+        remove_orphans: true
+      register: compose_up
+
+    # `docker compose up` has no idea that a bind-mounted file changed
+    # underneath it, so a configuration-only change leaves the old content live
+    # in the running container. Skipped when the task above just created the
+    # containers, which already picked the new files up.
+    - name: "Compose: Restart services after a configuration change"
+      when:
+        - project.config_services | default([]) | length > 0
+        - compose_templates is changed or compose_htpasswd is changed
+        - compose_up is not changed
+      community.docker.docker_compose_v2:
+        project_src: "{{ project.main_folder }}"
+        project_name: "{{ project.project_name }}"
+        files:
+          - compose.yml
+        services: "{{ project.config_services }}"
+        state: restarted

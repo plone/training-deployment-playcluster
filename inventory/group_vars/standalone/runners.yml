@@ -1,0 +1,26 @@
+---
+# riemers.ansible-gitlab-runner settings
+gitlab_runner_coordinator_url: "https://gitlab.com"
+gitlab_runner_registration_token_type: "authentication-token"
+gitlab_runner_no_log_secrets: true
+
+gitlab_runner_runners:
+  - name: "play4.playcluster.plone.org"
+    feature_flags:
+     - FF_USE_ADAPTIVE_REQUEST_CONCURRENCY
+    concurrent_specific: 4
+    state: present
+    token: "{{ vault.gitlab.runner_tokens.play4 }}"
+    executor: "docker"
+    docker_image: "docker:latest"
+    docker_volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock"
+      - "/builds:/builds"
+      - "/cache"
+    extra_configs:
+      runners.docker:
+        privileged: true
+        tls_verify: false
+        disable_cache: false
+      runners.docker.sysctls:
+        net.ipv4.ip_forward: "1"

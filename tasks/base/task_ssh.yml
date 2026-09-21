@@ -1,0 +1,107 @@
+# code: language=ansible
+---
+# Setup SSH
+#
+# Two rules, because getting SSH wrong locks you out of a machine you may not
+# have console access to:
+#
+# * Leave the provider's authentication policy alone. This task does not touch
+#   PasswordAuthentication: on a freshly provisioned VM, root may be reachable
+#   only by password, and switching that off from here would take effect on the
+#   next restart of sshd -- with no warning and no way back in.
+# * Never write a config sshd cannot load, and never write an AllowUsers line
+#   that leaves out the account Ansible is connected as. Both are checked
+#   before anything changes.
+#
+- name: "SSH: Generate a deployment key"
+  community.crypto.openssh_keypair:
+    path: "{{ playbook_dir }}/../etc/keys/{{ users.default.name }}_prod_deploy_ed25519"
+    type: "ed25519"
+  delegate_to: localhost
+  become: false
+
+- name: "SSH: Read authorized_keys from {{ users.setup.name }}"
+  ansible.builtin.command:
+    cmd: "cat {{ users.setup.homedir }}/.ssh/authorized_keys"
+  become_user: "{{ users.setup.name }}"
+  become: true
+  register: main_keys
+  changed_when: false
+
+- name: "SSH: Set setup keys for the new user"
+  ansible.posix.authorized_key:
+    user: "{{ users.default.name }}"
+    key: "{{ item }}"
+  loop: "{{ main_keys.stdout_lines }}"
+  become_user: "{{ users.default.name }}"
+  become: true
+
+- name: "SSH: Additional keys"
+  ansible.posix.authorized_key:
+    user: "{{ users.default.name }}"
+    key: "{{ lookup('file', item) }}"
+  with_fileglob:
+    - "{{ playbook_dir }}/../etc/keys/*.pub"
+  become_user: "{{ users.default.name }}"
+  become: true
+
+- name: "SSH: Keys listed in users.default.additional_keys"
+  ansible.posix.authorized_key:
+    user: "{{ users.default.name }}"
+    key: "{{ item }}"
+  loop: "{{ users.default.additional_keys | default([]) }}"
+  become_user: "{{ users.default.name }}"
+  become: true
+
+- name: "SSH: Refuse to lock out the account Ansible connects as"
+  vars:
+    _connect_user: "{{ ansible_user | default(users.setup.name) }}"
+  ansible.builtin.assert:
+    that:
+      - _connect_user in sshd.allow_users.split()
+      - _connect_user != 'root' or sshd.allow_root != 'no'
+    fail_msg: >-
+      Ansible connects as '{{ _connect_user }}', but this run would make sshd
+      refuse that account (AllowUsers '{{ sshd.allow_users }}', PermitRootLogin
+      '{{ sshd.allow_root }}'). Nothing has been changed. Fix
+      inventory/group_vars/all/sshd.yml before running again.
+    quiet: true
+
+# `sshd -t` needs its privilege-separation directory. On Ubuntu's socket-activated
+# ssh it only exists while a daemon runs, so a validate could fail on a healthy
+# host without this.
+- name: "SSH: Ensure /run/sshd exists for config validation"
+  ansible.builtin.file:
+    path: /run/sshd
+    state: directory
+    mode: "0755"
+
+- name: "SSH: Set root SSH access"
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: "^PermitRootLogin"
+    line: "PermitRootLogin {{ sshd.allow_root }}"
+    state: present
+    validate: "/usr/sbin/sshd -t -f %s"
+  notify: Restart ssh
+
+# The regexp makes this replace the line rather than add a second one. sshd merges
+# every AllowUsers line it finds, so without it a name removed here would keep
+# its access through the old line.
+- name: "SSH: Set AllowUsers"
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: "^AllowUsers "
+    insertafter: "^# Authentication"
+    line: "AllowUsers {{ sshd.allow_users }}"
+    validate: "/usr/sbin/sshd -t -f %s"
+  notify: Restart ssh
+
+- name: "SSH: Listen to port {{ sshd.port }}"
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: "^Port "
+    insertafter: "^#Port 22"
+    line: "Port {{ sshd.port }}"
+    validate: "/usr/sbin/sshd -t -f %s"
+  notify: Restart ssh

@@ -1,0 +1,20 @@
+---
+# geerlingguy.docker settings for the standalone host.
+#
+# Overrides inventory/group_vars/all/docker.yml. Ansible replaces the whole
+# `docker_daemon_options` dict rather than merging it, so every key is repeated
+# here.
+#
+# The only difference is the MTU. play1-3 need 1450 for the swarm overlay
+# network, but play4 is not a swarm node and has no private network -- its eth0
+# is a plain 1500. Leaving the bridges at 1450 breaks docker:dind, which starts
+# its *inner* daemon at the 1500 default inside a 1450 container: large image
+# layers then stall on push instead of failing cleanly. The CI jobs that push to
+# the registry on this host all run docker:dind, so keep this at 1500.
+docker_daemon_options:
+  mtu: 1500
+  data-root: "/var/lib/docker"
+  log-driver: "json-file"
+  log-opts:
+    max-size: "5m"
+    max-file: "3"

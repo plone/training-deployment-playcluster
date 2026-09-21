@@ -1,0 +1,76 @@
+{#-
+  zot configuration, rendered by tasks/compose/task_deploy.yml from the
+  `registry` variable in inventory/group_vars/standalone/registry.yml.
+
+  Managed by Ansible -- editing the copy on the host is pointless, it is
+  overwritten on the next run.
+
+  Two details that are easy to get wrong and fail silently rather than loudly:
+
+  * The ACLs live under http.accessControl.repositories, where they moved in
+    zot v2.0.0. Older examples put them directly under accessControl; zot
+    accepts that shape and then enforces nothing at all.
+  * Anonymous access is denied by the *absence* of an anonymousPolicy key.
+    There is no explicit "deny" to write, so do not add one.
+
+  Account passwords are never rendered here -- only names and actions. The
+  passwords go into the bcrypt htpasswd file referenced below.
+-#}
+{%- set policies = [] %}
+{%- for account in registry.accounts %}
+{%-   set _ = policies.append({"users": [account.name], "actions": account.actions}) %}
+{%- endfor %}
+{
+  "distSpecVersion": "1.1.1",
+  "storage": {
+    "rootDirectory": "/var/lib/zot",
+    "dedupe": true,
+    "gc": true,
+    "gcDelay": "1h",
+    "retention": {{ registry.retention | to_nice_json(indent=2, sort_keys=False) | indent(4) }}
+  },
+  "http": {
+    "address": "0.0.0.0",
+    "port": "5000",
+    "auth": {
+      "htpasswd": {
+        "path": "/etc/zot/htpasswd"
+      },
+      "failDelay": 3
+    },
+    "accessControl": {
+      "repositories": {
+        {{ registry.repositories | to_json }}: {
+          "policies": {{ policies | to_nice_json(indent=2, sort_keys=False) | indent(10) }},
+          "defaultPolicy": []
+        }
+      }
+    }
+  },
+  "log": {
+    "level": {{ registry.log_level | to_json }}
+  }{% if registry.ui.enabled %},
+  {#-
+    Both are needed: `ui` serves the pages, `search` is the GraphQL API behind
+    them. `cve` is an optional sub-key of search, not a separate extension.
+
+    No `mgmt` block here on purpose. The frontend does query that endpoint to
+    discover which authentication methods exist, but as of v2.1.20 the config
+    option is redundant -- `zot verify` answers "mgmt extensions configuration
+    option has been made redundant and will be ignored", so setting it only
+    buys a warning on every startup.
+  -#}
+  "extensions": {
+    "search": {
+      "enable": true{% if registry.ui.cve_scanning %},
+      "cve": {
+        "updateInterval": {{ registry.ui.cve_update_interval | to_json }}
+      }{% endif %}
+
+    },
+    "ui": {
+      "enable": true
+    }
+  }{% endif %}
+
+}

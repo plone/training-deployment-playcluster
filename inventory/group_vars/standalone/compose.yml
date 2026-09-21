@@ -1,0 +1,61 @@
+---
+# Docker Compose projects for the standalone host.
+#
+# play4 runs plain Docker Engine, not Swarm -- it hosts the GitLab CI runners
+# and must stay out of the play1-3 cluster. So these are `docker compose`
+# projects rather than swarm stacks, and this dict is the compose counterpart of
+# `stacks` in inventory/group_vars/all/stacks.yml, deployed by
+# tasks/compose/task_deploy.yml.
+#
+# Each project is written to <main_folder>/compose.yml plus a generated .env, so
+# `docker compose ps` and `docker compose logs` work by hand in that directory
+# without a -f flag.
+compose_projects:
+
+  registry:
+    enabled: true
+    project_name: "registry"
+    main_folder: "/srv/registry"
+    compose_file: "etc/compose/registry.yml"
+
+    # Substituted into compose_file via the generated .env.
+    env_vars:
+      TRAEFIK_VERSION: "v3.7.10"
+      TRAEFIK_EMAIL: "{{ devops.email }}"
+      ZOT_VERSION: "v2.1.20"
+      REGISTRY_HOSTNAME: "{{ registry.hostname }}"
+      REGISTRY_UI_PORT: "{{ registry.ui.port }}"
+      TRAEFIK_DASHBOARD_PORT: "{{ traefik_dashboard.port }}"
+
+    folders:
+      - path: "/srv/registry"
+        owner: "{{ users.default.name }}"
+        group: root
+        mode: "0755"
+      - path: "/srv/registry/etc"
+        owner: "{{ users.default.name }}"
+        group: root
+        mode: "0750"
+
+    # Rendered before the project is brought up, so zot has its configuration
+    # on disk the first time it starts.
+    templates:
+      - src: "etc/compose/registry/config.json.j2"
+        dest: "/srv/registry/etc/config.json"
+        mode: "0640"
+      - src: "etc/compose/registry/dashboard-users.j2"
+        dest: "/srv/registry/etc/dashboard-users"
+        mode: "0640"
+
+    # Bcrypt htpasswd file backing zot's authentication.
+    htpasswd:
+      path: "/srv/registry/etc/htpasswd"
+      users: "{{ registry.accounts }}"
+
+    # Services holding the files above as bind mounts. `docker compose up` does
+    # not notice that a mounted file changed, so these are restarted explicitly
+    # when one of them does -- config.json and htpasswd for the registry,
+    # dashboard-users for traefik.
+    config_services:
+      - registry
+      - traefik

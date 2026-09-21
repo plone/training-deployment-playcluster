@@ -1,0 +1,28 @@
+---
+# Template for inventory/group_vars/all/vault.yml -- placeholders only.
+#
+# Do not fill this file in. Copy it to vault.plain.yml in the repository root
+# (that name is gitignored), fill in the copy, encrypt it into place, and delete
+# the copy:
+#
+#   cp etc/vault.template.yml vault.plain.yml
+#   uv run ansible-vault encrypt --output inventory/group_vars/all/vault.yml vault.plain.yml
+#   rm vault.plain.yml
+#
+# It lives here, not in inventory/group_vars/all/, because Ansible loads every
+# .yml file in that directory as variables.
+vault:
+  # Only if your hosts reach the internet through an HTTP proxy.
+  proxy_credentials: ""
+  traefik:
+    # One htpasswd line for both Traefik dashboards: htpasswd -nbB admin '<password>'
+    ui_basic_auth: "admin:REPLACE-ME-bcrypt-hash"
+  gitlab:
+    runner_tokens:
+      # The glrt- token GitLab shows when you create the runner (chapter 5).
+      play4: "REPLACE-ME-glrt-token-from-gitlab"
+  registry:
+    accounts:
+      # openssl rand -hex 24, one for each account
+      ci: "REPLACE-ME"
+      deploy: "REPLACE-ME"

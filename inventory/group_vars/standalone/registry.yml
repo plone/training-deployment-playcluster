@@ -1,0 +1,110 @@
+---
+# Container registry (zot) served from play4 at https://registry.playcluster.plone.org
+#
+# Consumed by etc/compose/registry/config.json.j2 and by the `htpasswd` step in
+# tasks/compose/task_deploy.yml. The deployment mechanics live next door in
+# compose.yml; this file is only the application's own configuration.
+
+# Traefik's admin dashboard, on its own entrypoint in front of the registry.
+#
+# Published to the internet on a host with no firewall, so it is behind basic
+# auth and worth switching off once you are done with it -- set enabled to
+# false and redeploy, no other edits needed.
+#
+# It answers on the registry's own hostname so it reuses that Let's Encrypt
+# certificate instead of requesting a second one:
+#   https://registry.playcluster.plone.org:8443/dashboard/
+#
+# The credential is reused from the cluster Traefik's UI. Give it its own vault
+# entry if you would rather the two not share one password.
+traefik_dashboard:
+  enabled: true
+  port: 8443
+  # A single htpasswd line, `user:hash`. Written to a file rather than a
+  # container label: the hash contains `$`, which docker compose would try to
+  # interpolate, and labels are readable by anything with the docker socket.
+  basic_auth: "{{ vault.traefik.ui_basic_auth }}"
+
+registry:
+
+  hostname: "registry.playcluster.plone.org"
+
+  log_level: "info"
+
+  # zot's own web UI (zui). Not a second container: the v2.1.20 image already
+  # ships the extensions compiled in -- `zot --version` reports a binary-type of
+  # `...-search-sync-ui-userprefs` -- so this is purely a config switch.
+  #
+  # zot serves the UI from the *same* port as the registry API, so enabling it
+  # would also expose the UI on 443 at `/`. To keep 443 an API-only endpoint,
+  # etc/compose/registry.yml narrows the 443 router to PathPrefix(`/v2/`) and
+  # gives the UI its own entrypoint on the port below. Docker clients only ever
+  # use /v2/, so that split costs them nothing.
+  #
+  # There is no separate UI login: zui authenticates against the same htpasswd
+  # accounts, so sign in as `ci` or `deploy`. Both have read on `**`.
+  ui:
+    enabled: true
+    port: 7443
+
+    # CVE scanning, off deliberately. It is the one genuinely expensive part of
+    # the UI: zot pulls Trivy's vulnerability databases into `_trivy/` under the
+    # storage root (order of a GB) and rescans on a timer, and play4 also runs
+    # the CI builds. Everything else in the UI works without it -- you lose only
+    # the vulnerability tab. Turn it on if you want that and watch memory.
+    cve_scanning: false
+    cve_update_interval: "24h"
+
+  # Machine accounts. Passwords come from the vault and are turned into a
+  # bcrypt htpasswd file on the host; only the name and the actions are ever
+  # written into zot's config.json.
+  #
+  # The split matters: the swarm deploys with `docker stack deploy
+  # --with-registry-auth`, which copies the deploying client's credentials onto
+  # every swarm node, where they persist. Push rights must never land there, so
+  # the swarm authenticates as `deploy`, which can only read.
+  #
+  # Valid actions are read, create, update and delete. "read" is required in
+  # any policy -- the others are rejected without it.
+  accounts:
+    - name: "ci"
+      password: "{{ vault.registry.accounts.ci }}"
+      actions: ["read", "create", "update", "delete"]
+    - name: "deploy"
+      password: "{{ vault.registry.accounts.deploy }}"
+      actions: ["read"]
+
+  # Repository glob the accounts above are granted on. `**` is the catch-all.
+  # playcluster-demo is the only tenant today; when a second project arrives,
+  # split this into per-project patterns (`playcluster-demo/**`, ...) with their
+  # own accounts rather than widening these two.
+  repositories: "**"
+
+  # Storage retention, in zot's own schema (camelCase keys are dumped verbatim
+  # into config.json). Without this the `*/cache` repositories grow without
+  # bound -- BuildKit's `mode=max` cache turns over on every build.
+  #
+  # dryRun is deliberately ON for the first deployment: zot logs what each
+  # policy *would* delete without touching anything. Read those logs, confirm
+  # the `**/cache` policy is the one matching the cache repositories and not the
+  # catch-all below it, then set this to false. Overlapping globs are the part
+  # worth checking with your own eyes before it starts deleting.
+  retention:
+    dryRun: true
+    delay: "24h"
+    policies:
+      # BuildKit layer cache: only the newest cache manifest is ever useful.
+      - repositories: ["**/cache"]
+        deleteReferrers: true
+        deleteUntagged: true
+        keepTags:
+          - mostRecentlyPushedCount: 1
+      # Application images: keep the moving tags and released versions
+      # forever, plus enough recent sha- tags to roll back to.
+      - repositories: ["**"]
+        deleteReferrers: true
+        deleteUntagged: true
+        keepTags:
+          - patterns: ['^latest$', '^v?[0-9]+\.[0-9]+']
+          - mostRecentlyPushedCount: 20
+            pushedWithin: "2160h"

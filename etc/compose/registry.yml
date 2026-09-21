@@ -1,0 +1,133 @@
+---
+# Container registry for the play cluster. Managed by Ansible -- edit
+# etc/compose/registry.yml in the playcluster repo, not this copy on the host.
+#
+# play4 is deliberately not a swarm node, so this is a compose project and
+# Traefik runs with the *docker* provider: routing labels sit at the service's
+# top level here, not under `deploy:` as they do in etc/stacks/traefik.yml.
+#
+# zot listens on 5000 inside nw-registry and is never published; the only way in
+# is Traefik on 443, which terminates TLS with a Let's Encrypt certificate.
+
+services:
+
+  traefik:
+    image: "traefik:${TRAEFIK_VERSION}"
+    restart: unless-stopped
+
+    ports:
+      - "80:80"
+      - "443:443"
+{% if registry.ui.enabled %}
+      - "${REGISTRY_UI_PORT}:${REGISTRY_UI_PORT}"
+{% endif %}
+{% if traefik_dashboard.enabled %}
+      - "${TRAEFIK_DASHBOARD_PORT}:${TRAEFIK_DASHBOARD_PORT}"
+{% endif %}
+
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - vol-traefik-certs:/certificates
+{% if traefik_dashboard.enabled %}
+      - ./etc/dashboard-users:/etc/traefik/dashboard-users:ro
+{% endif %}
+
+    command:
+      - --providers.docker
+      - --providers.docker.exposedbydefault=false
+      # 80 exists only to answer the redirect; the ACME challenge below is
+      # TLS-ALPN on 443, matching the cluster's Traefik.
+      - --entrypoints.http.address=:80
+      - --entrypoints.http.http.redirections.entrypoint.to=https
+      - --entrypoints.http.http.redirections.entrypoint.scheme=https
+      - --entrypoints.https.address=:443
+{% if registry.ui.enabled %}
+      - --entrypoints.registryui.address=:${REGISTRY_UI_PORT}
+{% endif %}
+{% if traefik_dashboard.enabled %}
+      - --entrypoints.dashboard.address=:${TRAEFIK_DASHBOARD_PORT}
+      - --api=true
+      - --api.dashboard=true
+{% endif %}
+      - --certificatesresolvers.le.acme.email=${TRAEFIK_EMAIL}
+      - --certificatesresolvers.le.acme.storage=/certificates/acme.json
+      - --certificatesresolvers.le.acme.tlschallenge=true
+      - --accesslog
+      - --log
+      - --log.level=INFO
+
+{% if traefik_dashboard.enabled %}
+    # The dashboard answers on the registry's own hostname, so it is served
+    # with that existing Let's Encrypt certificate -- no second issuance, and
+    # no self-signed warning. Reach it at
+    # https://${REGISTRY_HOSTNAME}:${TRAEFIK_DASHBOARD_PORT}/dashboard/
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.rt-dashboard.rule=Host(`${REGISTRY_HOSTNAME}`)
+      - traefik.http.routers.rt-dashboard.entrypoints=dashboard
+      - traefik.http.routers.rt-dashboard.tls=true
+      - traefik.http.routers.rt-dashboard.tls.certresolver=le
+      - traefik.http.routers.rt-dashboard.service=api@internal
+      - traefik.http.routers.rt-dashboard.middlewares=mw-dashboard-auth
+      - traefik.http.middlewares.mw-dashboard-auth.basicauth.usersfile=/etc/traefik/dashboard-users
+
+{% endif %}
+    networks:
+      - nw-registry
+
+  registry:
+    image: "ghcr.io/project-zot/zot:${ZOT_VERSION}"
+    restart: unless-stopped
+
+    # The image's own CMD is `serve /etc/zot/config.json`, so mounting the
+    # config at that path is all it takes -- no command override. Storage path
+    # and listen port come from the config, there are no defaults in play.
+    volumes:
+      - vol-registry-data:/var/lib/zot
+      - ./etc/config.json:/etc/zot/config.json:ro
+      - ./etc/htpasswd:/etc/zot/htpasswd:ro
+
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=nw-registry
+      - traefik.http.services.svc-registry.loadbalancer.server.port=5000
+{% if registry.ui.enabled %}
+      # zot serves the UI and the registry API from one port, so the split
+      # between them is made here rather than in zot. 443 is narrowed to /v2/,
+      # which is the whole OCI distribution API and all a docker client ever
+      # touches; the UI and its GraphQL backend are reachable only on the
+      # dedicated entrypoint below.
+      - traefik.http.routers.rt-registry.rule=Host(`${REGISTRY_HOSTNAME}`) && PathPrefix(`/v2/`)
+{% else %}
+      - traefik.http.routers.rt-registry.rule=Host(`${REGISTRY_HOSTNAME}`)
+{% endif %}
+      - traefik.http.routers.rt-registry.entrypoints=https
+      - traefik.http.routers.rt-registry.tls=true
+      - traefik.http.routers.rt-registry.tls.certresolver=le
+      - traefik.http.routers.rt-registry.service=svc-registry
+      # Image layers run to hundreds of MB. Traefik imposes no body limit by
+      # default and no middleware here adds one -- keep it that way, and keep
+      # this hostname off any CDN that caps request bodies.
+{% if registry.ui.enabled %}
+
+      # The UI, on its own entrypoint and the registry's hostname so it reuses
+      # that Let's Encrypt certificate. No Traefik middleware in front: zot
+      # authenticates it against the same htpasswd accounts, and a second basic
+      # auth layer here would only mean two password prompts.
+      - traefik.http.routers.rt-registry-ui.rule=Host(`${REGISTRY_HOSTNAME}`)
+      - traefik.http.routers.rt-registry-ui.entrypoints=registryui
+      - traefik.http.routers.rt-registry-ui.tls=true
+      - traefik.http.routers.rt-registry-ui.tls.certresolver=le
+      - traefik.http.routers.rt-registry-ui.service=svc-registry
+{% endif %}
+
+    networks:
+      - nw-registry
+
+volumes:
+  vol-traefik-certs: {}
+  vol-registry-data: {}
+
+networks:
+  nw-registry:
+    name: nw-registry
