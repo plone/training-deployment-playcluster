@@ -6,7 +6,7 @@ and Portainer, plus a separate host running a GitLab Runner and a private contai
 This is the *cluster* half of the Plone deployment training. Deploying Plone sites onto the cluster
 happens in the companion repository, **training-deployment-gitlabdeploy**: a cookieplone project whose
 GitLab pipeline builds its images into the cluster's registry and deploys it to
-`project1.playcluster.plone.org`. Its pipeline runs on GitLab.com, at
+`playcluster.plone.org`. Its pipeline runs on GitLab.com, at
 [gitlab.com/plone-training1/training-deployment-gitlabdeploy](https://gitlab.com/plone-training1/training-deployment-gitlabdeploy),
 and it is mirrored to
 [github.com/plone/training-deployment-gitlabdeploy](https://github.com/plone/training-deployment-gitlabdeploy).
@@ -22,6 +22,22 @@ and it is mirrored to
 
 Everything runs from your own machine. Ansible reaches the servers over SSH as `root` and needs
 nothing installed on them beforehand.
+
+## Where to find what
+
+Once the cluster runs, it has five web addresses on two hosts:
+
+| Address | What | Login |
+| --- | --- | --- |
+| `https://traefik.playcluster.plone.org/` | The cluster's Traefik dashboard, on `play1` | `admin`, password from `vault.traefik.ui_basic_auth` |
+| `https://portainer.playcluster.plone.org/` | Portainer, a web UI for the swarm, on `play1` | the administrator created with Portainer's setup token |
+| `https://registry.playcluster.plone.org/v2/` | The registry API, on `play4` — what `docker` talks to | `ci` (push) or `deploy` (pull) |
+| `https://registry.playcluster.plone.org:7443/` | The registry's web UI | `ci` or `deploy` |
+| `https://registry.playcluster.plone.org:8443/dashboard/` | The dashboard of `play4`'s own Traefik — the trailing slash matters | `admin`, the same password as the cluster's Traefik |
+
+The registry answers on three ports because zot serves its API and its web UI from one listener:
+port 443 is kept for the API alone (`/v2/`), so `https://registry.playcluster.plone.org/` itself gives
+a 404. Chapter 7 of the documentation explains the arrangement.
 
 ## Quick start
 

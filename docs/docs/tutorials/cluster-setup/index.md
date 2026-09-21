@@ -33,6 +33,23 @@ That is worth stating because it changes what "where am I?" means throughout.
 Unless a section says otherwise, you are on your own machine, in a checkout of
 this repository.
 
+## Where to find what
+
+Once the cluster runs, it has five web addresses on two hosts:
+
+| Address | What | Login |
+| --- | --- | --- |
+| `https://traefik.playcluster.plone.org/` | The cluster's Traefik dashboard, on `play1` | `admin`, password from `vault.traefik.ui_basic_auth` |
+| `https://portainer.playcluster.plone.org/` | Portainer, a web UI for the swarm, on `play1` | the administrator created with Portainer's setup token |
+| `https://registry.playcluster.plone.org/v2/` | The registry API, on `play4` — what `docker` talks to | `ci` (push) or `deploy` (pull) |
+| `https://registry.playcluster.plone.org:7443/` | The registry's web UI | `ci` or `deploy` |
+| `https://registry.playcluster.plone.org:8443/dashboard/` | The dashboard of `play4`'s own Traefik — the trailing slash matters | `admin`, the same password as the cluster's Traefik |
+
+The registry answers on three ports because zot serves its API and its web UI
+from one listener: port 443 is kept for the API alone, so
+`https://registry.playcluster.plone.org/` itself gives a 404. Chapter 7 explains
+the arrangement.
+
 ## Chapters
 
 | | Chapter |
