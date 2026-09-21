@@ -16,7 +16,7 @@ turn bare Linux servers into a Docker Swarm running Plone, with a GitLab CI
 runner and a container registry alongside.
 
 The documentation walks through the whole setup from scratch, in six
-chapters.
+chapters, followed by a reference chapter on running the registry.
 
 % The chapters are listed here rather than in the overview's own index, so each
 % becomes a top-level chapter of the PDF. Nested inside that page they would
@@ -35,6 +35,7 @@ tutorials/cluster-setup/3-manager
 tutorials/cluster-setup/4-workers
 tutorials/cluster-setup/5-ci-runner
 tutorials/cluster-setup/6-gitlab
+tutorials/cluster-setup/7-registry
 ```
 
 ```{toctree}

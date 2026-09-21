@@ -1,225 +1,119 @@
-# DevOps Ansible Operations for playcluster 🚀
+# training-deployment-playcluster
 
-Welcome to the DevOps documentation for playcluster! In this guide, we'll walk you through the setup and deployment process, ensuring a smooth and efficient development workflow. We leverage the power of [Ansible](https://www.ansible.com/), [Docker](https://www.docker.com/), and [Docker Swarm](https://docs.docker.com/engine/swarm/) to automate, containerize, and orchestrate application deployment. 🛠️🐳🌐
+Ansible that turns four bare Ubuntu servers into the **playcluster**: a Docker Swarm with Traefik
+and Portainer, plus a separate host running a GitLab Runner and a private container registry.
 
-- **Ansible** empowers us to automate tasks like software provisioning, configuration management, and application deployment. It's like having a robot assistant that takes care of the repetitive tasks, freeing you to focus on more strategic activities! 🤖✨
+This is the *cluster* half of the Plone deployment training. Deploying Plone sites onto the cluster
+happens in the companion repository, **training-deployment-gitlabdeploy**: a cookieplone project whose
+GitLab pipeline builds its images into the cluster's registry and deploys it to
+`project1.playcluster.plone.org`. Its pipeline runs on GitLab.com, at
+[gitlab.com/plone-training1/training-deployment-gitlabdeploy](https://gitlab.com/plone-training1/training-deployment-gitlabdeploy),
+and it is mirrored to
+[github.com/plone/training-deployment-gitlabdeploy](https://github.com/plone/training-deployment-gitlabdeploy).
 
-- **Docker** encapsulates our application and its dependencies into a container to ensure consistency across multiple development, testing, and deployment environments. It's like packing your entire application, including the environment it runs in, into a portable box that you can run anywhere! 📦🚀
+## What you get
 
-- **Docker Swarm** takes it a step further by turning a group of Docker engines into a single, virtual Docker engine. It allows us to deploy our containers across multiple machines, enhancing availability and scalability. It's like having a swarm of bees working harmoniously to build, run, and scale your application! 🐝🌟
+| Host | Role |
+| --- | --- |
+| `play1` | Swarm manager: Traefik, Portainer, and the deployed sites |
+| `play2` | Swarm worker |
+| `play3` | Swarm worker, labelled for persistent storage |
+| `play4` | **Not** in the swarm: GitLab Runner and the [zot](https://zotregistry.dev/) container registry |
 
-### Our Docker Stack 📚
+Everything runs from your own machine. Ansible reaches the servers over SSH as `root` and needs
+nothing installed on them beforehand.
 
-We deploy a robust website running [Plone](https://plone.org/) using a Docker stack that consists of:
+## Quick start
 
-- **Traefik:** Serves as the router and SSL termination, integrated with [Let's Encrypt](https://letsencrypt.org/) for free SSL certificates, ensuring that our website is secure and trusted. 🔒🌐
-
-- **Plone Frontend using Volto:** A modern, fast, React-based frontend that delivers an exceptional user experience. It's like having a sleek, high-performance car to navigate the web! 🏎️💨
-
-- **Plone Backend:** Responsible for the API, it's the engine under the hood, ensuring that data is processed, stored, and retrieved efficiently. 🏭🚀
-
-- **Postgres 18 Database:** A reliable, robust database to store the site data, ensuring that our content is safe, secure, and quickly accessible. 🗃️⚡
-
-
-Now, let’s dive into the setup! 🏊‍♂️💫
-## Setup
-
-Ensure you navigate to the `devops/ansible/` folder before executing any commands listed in this document. From the root of your repository, execute:
-
-```shell
-cd devops/ansible/
-```
-
-### Environment Configuration
-
-Start by creating an `.env` file in the `devops/ansible/` folder. You can copy the existing `.env_dist` file as a starting point:
-
-```shell
-cp .env_dist .env
-```
-
-Edit the `.env` file to suit your environment. For example:
-
-```
-ANSIBLE_REMOTE_PORT=22
-DEPLOY_ENV=prod
-DEPLOY_HOST=play1.playcluster.plone.org
-DEPLOY_PORT=22
-DEPLOY_USER=plone
-DOCKER_CONFIG=.docker
-STACK_NAME=playcluster-plone-org
-```
-
-Note: The `.env` file is included in `.gitignore`, ensuring environment-specific configurations aren't pushed to the repository.
-
-
-### Server installation
-
-You need either a Ubuntu or Debian based system for each playcluster node, enable SSH, and install a supported version of Python 3 on that system.
-
-
-### Ansible Installation
-
-Execute the following to create a Python 3 virtual environment and install Ansible along with its dependencies:
+You need four servers running a clean Ubuntu 26.04, DNS names for them, and SSH access as `root`.
+The [documentation](#documentation) explains each step; in short:
 
 ```shell
 make install
 ```
 
-### Inventory Configuration
+Create a vault password and your own vault from the template (the committed `vault.yml` is
+encrypted with the maintainer's password):
 
-Modify `devops/ansible/inventory/hosts.yml` with the appropriate connection details:
-
-```yaml
----
-cluster:
-  hosts:
-    play1.playcluster.plone.org:
-      ansible_user: root
-      ansible_host: play1.playcluster.plone.org
-      host: play1
-      hostname: play1.playcluster.plone.org
-      swarm_node:
-        labels:
-          type: manager
-          env: production
-
+```shell
+openssl rand -hex 32 > .vault_pass && chmod 600 .vault_pass
 ```
 
-## Server Setup
+```shell
+cp etc/vault.template.yml vault.plain.yml
+```
 
-With the correct information in `devops/ansible/inventory/hosts.yml`, test the connection to the server with:
+Fill in `vault.plain.yml`, then encrypt it into place and remove the plain copy:
+
+```shell
+uv run ansible-vault encrypt --output inventory/group_vars/all/vault.yml vault.plain.yml && rm vault.plain.yml
+```
+
+Check the connection, then provision the manager first, the workers next, and the CI host last:
 
 ```shell
 uv run ansible-playbook playbooks/_connect.yml
 ```
 
-And then, if the connection is successful, initiate the remote server setup by running:
-
 ```shell
-uv run ansible-playbook playbooks/setup.yml
+uv run ansible-playbook playbooks/setup.yml --limit cluster_manager
 ```
 
-This command executes the Ansible playbook `devops/playbooks/setup.yml` on the remote server, performing various setup tasks including user creation, SSH setup, Docker installation, and more.
-
-## Container Registry on play4 📦
-
-`play4` is the standalone host: it runs the GitLab CI runners and, at
-`https://registry.playcluster.plone.org`, a [zot](https://zotregistry.dev/) container registry
-behind its own Traefik.
-
-**It is deliberately not a swarm node.** The swarm lives on play1–3, and joining play4 to it would
-put a second Traefik in the cluster competing for ports 80/443 and drop the CI runner's containers
-into an orchestrated environment. So the registry is a plain `docker compose` project, deployed by
-Ansible in the same shape the swarm stacks use:
-
-| | Swarm (play1–3) | Compose (play4) |
-| --- | --- | --- |
-| Definition | `stacks` in `inventory/group_vars/all/stacks.yml` | `compose_projects` in `inventory/group_vars/standalone/compose.yml` |
-| Deployment | `tasks/stacks/task_deploy.yml` | `tasks/compose/task_deploy.yml` |
-| Files | `etc/stacks/*.yml` | `etc/compose/*.yml` |
-
-The registry's own configuration — accounts, ACLs and retention — lives in
-`inventory/group_vars/standalone/registry.yml`.
-
-### Deploying
-
-Deploy or redeploy just the registry:
-
 ```shell
-uv run ansible-playbook playbooks/setup_ci.yml --limit standalone --tags registry
+uv run ansible-playbook playbooks/setup.yml --limit cluster_workers
 ```
 
-Everything lands in `/srv/registry` on the host as `compose.yml` plus a generated `.env`, so the
-usual commands work there directly:
-
 ```shell
-ssh root@play4.playcluster.plone.org 'cd /srv/registry && docker compose ps && docker compose logs --tail=50 registry'
+uv run ansible-playbook playbooks/setup_ci.yml --limit standalone
 ```
 
-### Accounts
+The documentation does the very first run one host at a time (`--limit play2.playcluster.plone.org`)
+so that each run's output belongs to a single server; the groups above are the everyday form.
 
-Two machine accounts, with genuinely different privileges:
+Before the first run, read chapter 1 on SSH keys, and chapter 5 for the GitLab runner token the
+last command needs.
 
-| Account | Rights | Used by |
-| --- | --- | --- |
-| `ci` | read, create, update, delete | GitLab CI build jobs pushing images and the BuildKit layer cache |
-| `deploy` | read only | The swarm, pulling during `docker stack deploy` |
+## Documentation
 
-These are registry logins, not accounts on the hosts. The SSH account that runs `docker stack
-deploy` is `plone` (`users.default`); `root` (`users.setup`) is only for provisioning.
+The documentation lives in `docs/`, as Markdown, and builds to HTML and PDF:
 
-The split is not cosmetic. `docker stack deploy --with-registry-auth` copies the deploying client's
-credentials onto every swarm node, where they persist so nodes can re-pull after a reboot. Push
-rights must never land there.
-
-Anonymous access is denied. Passwords live in the vault and are turned into a bcrypt `htpasswd` file
-on the host; read them back with:
-
-```shell
-uv run ansible-vault view inventory/group_vars/all/vault.yml
-```
-
-They map onto the `playcluster-demo` pipeline's CI/CD variables as `REGISTRY_USER` /
-`REGISTRY_PASSWORD` (from `ci`) and `REGISTRY_PULL_USER` / `REGISTRY_PULL_PASSWORD` (from `deploy`),
-alongside `REGISTRY_IMAGE_PREFIX=registry.playcluster.plone.org/playcluster-demo`.
-
-### Web UI
-
-zot ships its own web UI (zui) on port **7443**:
-
-<https://registry.playcluster.plone.org:7443/>
-
-It is not a second container. The `ghcr.io/project-zot/zot` image already has the extensions
-compiled in — the startup log reports a `binary-type` of `…-search-sync-ui-userprefs` — so it is
-enabled purely by `registry.ui` in `inventory/group_vars/standalone/registry.yml`.
-
-Sign in with the registry accounts themselves, `ci` or `deploy`; there is no separate UI login and
-no Traefik basic auth in front, which would only mean a second password prompt.
-
-**Why a separate port.** zot serves the UI and the registry API from one listener, so enabling the
-UI also puts it on 443 at `/`. To keep 443 an API-only endpoint, the 443 router is narrowed to
-`PathPrefix(/v2/)` — the whole OCI distribution API, and all a docker client ever uses — while the
-UI gets its own entrypoint. Turning the UI off restores the unrestricted 443 rule automatically.
-
-Anonymous visitors to 7443 get the static page shell and `/v2/_zot/ext/mgmt`, which zui reads to
-discover the login methods; it returns the zot version and `{"htpasswd":{}}`, no usernames. Every
-data path — GraphQL search, `/v2/_catalog`, manifests — returns 401 without credentials. The one
-tradeoff is that the exact zot version is publicly readable on that port.
-
-CVE scanning is deliberately **off**. It is the expensive half of the UI: zot downloads Trivy's
-vulnerability databases into `_trivy/` under the storage root and rescans on a timer, on a host that
-is also running the CI builds. Set `registry.ui.cve_scanning: true` to enable it and watch memory.
-
-### Traefik dashboard
-
-The Traefik in front of the registry exposes its admin UI on port **8443**:
-
-<https://registry.playcluster.plone.org:8443/dashboard/> — the trailing slash matters.
-
-Log in as `admin` with the same password as the cluster Traefik UI; both read
-`vault.traefik.ui_basic_auth`. The credential is mounted as a `usersfile` rather than set in a
-`basicauth.users` label, because the `$apr1$` hash contains `$` (which docker compose would
-interpolate) and labels are readable by anything that can reach the docker socket — on play4 that
-includes CI job containers.
-
-It answers on the registry's own hostname so it reuses that Let's Encrypt certificate instead of
-requesting a second one.
-
-**This is a public admin UI on a host where `ufw` is inactive.** Turn it off when you are done:
-set `traefik_dashboard.enabled: false` in `inventory/group_vars/standalone/registry.yml` and
-redeploy — the entrypoint, published port, mount and labels all disappear together.
-
-### Retention
-
-zot prunes on a schedule so the `*/cache` repositories do not grow without bound — BuildKit's
-`mode=max` cache turns over on every build.
-
-It ships with **`dryRun: true`**, meaning zot only logs what it *would* delete. Confirm the policies
-match what you expect before letting it delete anything:
+| Chapter | |
+| --- | --- |
+| 1 | SSH, keys and the two users |
+| 2 | Ansible in one sitting — including your own vault and your own domain |
+| 3 | Provision the manager |
+| 4 | Provision the workers |
+| 5 | The CI runner host |
+| 6 | Connecting GitLab — the CI/CD variables |
+| 7 | The registry in detail |
 
 ```shell
-ssh root@play4.playcluster.plone.org 'cd /srv/registry && docker compose logs registry | grep -i retention'
+cd docs && make html
 ```
 
-Then set `retention.dryRun: false` in `inventory/group_vars/standalone/registry.yml` and redeploy.
+```shell
+cd docs && make pdf
+```
+
+The Plone training includes these chapters as its reference section. They are maintained here
+only; `make export-training` in `docs/` copies them into a checkout of the training.
+
+## Repository layout
+
+| Path | Holds |
+| --- | --- |
+| `inventory/hosts.yml` | The four hosts and their groups |
+| `inventory/group_vars/` | All settings; `all/` for every host, `standalone/` for `play4` only |
+| `playbooks/` | `setup.yml` for the swarm hosts, `setup_ci.yml` for `play4`, `deploy.yml` for stacks |
+| `tasks/` | The steps the playbooks run, by area |
+| `etc/stacks/` | Swarm stacks on the manager: Traefik, cronjob, Portainer |
+| `etc/compose/` | The Docker Compose project on `play4`: zot and its Traefik |
+| `etc/keys/` | SSH keys installed for the `plone` user — gitignored |
+| `etc/vault.template.yml` | Placeholders for the vault |
+| `docs/` | The documentation |
+
+The swarm hosts get their services as swarm stacks, `play4` as a Compose project — chapter 7 explains
+why, and how the two mirror each other.
+
+This repository started from the Ansible setup that [cookieplone](https://github.com/plone/cookieplone)
+generates for Plone projects.

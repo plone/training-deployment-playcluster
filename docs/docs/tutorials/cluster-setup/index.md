@@ -43,6 +43,7 @@ this repository.
 | 4 | [Provision the workers](4-workers.md) |
 | 5 | [The CI runner host](5-ci-runner.md) |
 | 6 | [Connecting GitLab](6-gitlab.md) |
+| 7 | [The registry in detail](7-registry.md) |
 
 Provisioning a host takes about five minutes; `play4` takes longer, because it
 also installs the GitLab Runner. Chapter 3 is where a wrong host name or a

@@ -205,6 +205,9 @@ docker pull registry.playcluster.plone.org/probe/alpine:test && docker push regi
 The swarm pulls with `deploy` and stores those credentials on every node, which
 is why that account must not be able to push.
 
+Running the registry from here on — its layout, the web UI and dashboard ports,
+and the retention policy that is still in dry-run mode — is covered in chapter 7.
+
 ## You are done
 
 The cluster runs, Traefik is routing, and CI has somewhere to build. One step
