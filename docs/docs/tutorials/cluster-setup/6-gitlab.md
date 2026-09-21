@@ -78,11 +78,14 @@ fail: it falls back to GitLab's own container registry, which is always enabled
 there. Images get pushed to GitLab.com while the deploy looks for them in your
 registry.
 
-**Leave *Expand variable reference* enabled** on `REGISTRY_IMAGE_PREFIX`, so
-`$CI_PROJECT_PATH` becomes each project's own path, such as
-`plone-training1/my-site`. One group variable then gives every project its own
-place in the registry. Image names must be lowercase, so keep project paths
-lowercase.
+**`$CI_PROJECT_PATH` is resolved by the pipeline, not by GitLab.** One group
+variable, `registry.playcluster.plone.org/$CI_PROJECT_PATH`, gives every project
+its own place in the registry, such as `plone-training1/my-site`. But GitLab
+hands a group variable's reference to a predefined variable to the job as it is,
+literally `$CI_PROJECT_PATH` — whatever the *Expand variable reference* setting
+says. The deploy project's first job therefore expands the reference itself, and
+stops with an error if anything is left unresolved. Image names must be
+lowercase, so keep project paths lowercase.
 
 **Protected variables need protected branches and tags.** The default branch is
 protected by default. If you build releases from Git tags, add a protected tag
