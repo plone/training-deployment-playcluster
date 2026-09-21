@@ -84,13 +84,13 @@ registry:
   # into config.json). Without this the `*/cache` repositories grow without
   # bound -- BuildKit's `mode=max` cache turns over on every build.
   #
-  # dryRun is deliberately ON for the first deployment: zot logs what each
-  # policy *would* delete without touching anything. Read those logs, confirm
-  # the `**/cache` policy is the one matching the cache repositories and not the
-  # catch-all below it, then set this to false. Overlapping globs are the part
-  # worth checking with your own eyes before it starts deleting.
+  # dryRun was ON for the first deployment: zot then only logs what each
+  # policy *would* delete. Its logs confirmed that the `**/cache` policy, not
+  # the catch-all below it, is the one matching the cache repositories, so it
+  # is off now. Set it back to true while you try out a changed policy:
+  # overlapping globs are the part worth checking before it deletes.
   retention:
-    dryRun: true
+    dryRun: false
     delay: "24h"
     policies:
       # BuildKit layer cache: only the newest cache manifest is ever useful.

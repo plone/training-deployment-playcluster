@@ -164,10 +164,11 @@ run it while sharing your screen, and do not paste its output anywhere.
 From your own machine:
 
 ```shell
-curl -sI https://registry.playcluster.plone.org/v2/ | head -1
+curl -s -o /dev/null -w '%{http_code}\n' https://registry.playcluster.plone.org/v2/
 ```
 
-`HTTP/2 401`: TLS works and anonymous access is refused. The registry has three
+`401`: TLS works and anonymous access is refused. Use a GET, as here: zot answers
+a `HEAD` request (`curl -I`) on `/v2/` with `405`. The registry has three
 entrances on the same host name:
 
 `https://registry.playcluster.plone.org/v2/`
